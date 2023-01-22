@@ -1,5 +1,4 @@
 import asyncio
-from asyncio import StreamReader, StreamWriter
 
 from aioconsole import ainput
 
@@ -36,22 +35,6 @@ class Client:
             response = await ainput(">>> ")
             self.writer.write(response.encode('utf-8'))
             await self.writer.drain()
-
-
-class AuthUser:
-    def __init__(self, reader: StreamReader, writer: StreamWriter, reports: int = 0) -> None:
-        self.reader = reader
-        self.writer = writer
-        self.reports = reports
-        self.nickname = 'bot'
-        self.public = False
-
-    async def get_message(self) -> str:
-        logger.warning(f'word')
-        return str((await self.reader.read(255)).decode('windows-1251'))
-
-    def send_message(self, message: bytes) -> None:
-        return self.writer.write(message)
 
 
 if __name__ == '__main__':

@@ -3,11 +3,39 @@ import threading
 from asyncio import StreamReader, StreamWriter
 from datetime import datetime
 
-from client import AuthUser
 from log_config import get_logger
 from setting import HOST, PORT
 
 logger = get_logger(__name__)
+
+BAN_TIME_SEC = 30
+
+WELCOME = ("Welcome to chat \n"
+           "Please choose you nickname \n"
+           "Write /nickname <your nickname> \n"
+           "You can send private msg \n"
+           "Write /pm <nickname> <message>\n"
+           "Write /ban <nick> to block user\n"
+           "If you want to delay message - \n"
+           "write /delay <minutes> <message> \n"
+           "Write quit to leave chat \n")
+
+
+
+class AuthUser:
+    def __init__(self, reader: StreamReader, writer: StreamWriter, reports: int = 0) -> None:
+        self.reader = reader
+        self.writer = writer
+        self.reports = reports
+        self.nickname = 'User'
+        self.public = False
+
+    async def get_message(self) -> str:
+        logger.warning(f'word')
+        return str((await self.reader.read(255)).decode("utf8"))
+
+    def send_message(self, message: bytes) -> None:
+        return self.writer.write(message)
 
 
 class Server:
@@ -31,6 +59,7 @@ class Server:
     async def authentication(self, reader: StreamReader, writer: StreamWriter) -> None:
         logger.warning('Authentification user')
         user = AuthUser(reader, writer)
+        writer.write(WELCOME.encode())
         await self.check_messege(user)
 
     def set_nickname(self, user: AuthUser, message: str) -> None:
@@ -44,21 +73,21 @@ class Server:
             logger.warning(f'message: {message}')
             if user.reports < 3:
                 logger.warning('Check messege')
-                if str(message) == 'public':
+                if str(message) == '/public':
                     self.public_chat(message, user)
-                elif str(message).startswith('nickname'):
+                elif str(message).startswith('/nickname'):
                     self.set_nickname(user, message)
-                elif str(message).startswith('private'):
-                    self.private_massege(user, message)
-                elif str(message).startswith('report'):
-                    self.strick(message)
-                elif str(message).startswith('timer'):
+                elif str(message).startswith('/pm'):
+                    self.private_message(user, message)
+                elif str(message).startswith('/ban'):
+                    self.ban(message)
+                elif str(message).startswith('/timer'):
                     self.send_timer(message)
                 elif user.public:
                     self.public_chat(message, user)
 
     def public_chat(self, message: str, user: AuthUser) -> None:
-        logger.warning('We are in public_chat')
+        logger.warning('Is public chat')
         if user.public:
             save_msg = f'{user.nickname} send: {message}'
             self.public.append(save_msg)
@@ -70,7 +99,7 @@ class Server:
             for last_msg in self.public[:20]:
                 user.send_message(last_msg.encode('utf-8'))
 
-    def private_massege(self, user: AuthUser, message: str) -> None:
+    def private_message(self, user: AuthUser, message: str) -> None:
         logger.warning('Send private message')
         get_private = message.split('to')[-1]
         msg = ((message.split('-')[1])).replace('to', 'from').encode('utf-8')
@@ -79,16 +108,15 @@ class Server:
             logger.warning(sent_to)
             sent_to.send_message(msg)
 
-    def strick(self, message: str) -> None:
+    def ban(self, message: str) -> None:
         logger.warning('Send report')
         user = message.split('to')[-1]
-        strick_to = self.users.get(user)
-        if strick_to:
-            strick_to.reports += 1
-        if strick_to.reports > 2:
-            logger.warning(f'{strick_to.nickname} has been baned')
-            sec = 30
-            timer = threading.Timer(sec, function=self.timer_ban, args=(strick_to,))
+        report_user = self.users.get(user)
+        if report_user:
+            report_user.reports += 1
+        if report_user.reports > 2:
+            logger.warning(f'{report_user.nickname} user is banned on {BAN_TIME_SEC} sec')
+            timer = threading.Timer(BAN_TIME_SEC, function=self.timer_ban, args=(report_user,))
             timer.start()
 
     @staticmethod
