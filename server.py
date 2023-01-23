@@ -2,24 +2,22 @@ import asyncio
 import threading
 from asyncio import StreamReader, StreamWriter
 from datetime import datetime
+from typing import Tuple
 
 from log_config import get_logger
-from setting import HOST, PORT
+from setting import BAN_TIME_SEC, HOST, LAST_MSG_COUNT, PORT
 
 logger = get_logger(__name__)
 
-BAN_TIME_SEC = 30
 
-WELCOME = ("Welcome to chat \n"
-           "Please choose you nickname \n"
-           "Write /nickname <your nickname> \n"
-           "You can send private msg \n"
-           "Write /pm <nickname> <message>\n"
-           "Write /ban <nick> to block user\n"
-           "If you want to delay message - \n"
-           "write /delay <minutes> <message> \n"
-           "Write quit to leave chat \n")
-
+WELCOME_TEXT = (
+    "Welcome to chat \n"
+    "Command list:"
+    "/nickname <your nickname> - choose nickname\n"
+    "/pm <user> <message> - send private message to user\n"
+    "/ban <user nickname> - report user\n"
+    "/delay <date> <time> <message> - to delay message. Example '/delay 2023-01-23 22:26 Hi, i here.'\n"
+)
 
 
 class AuthUser:
@@ -31,7 +29,6 @@ class AuthUser:
         self.public = False
 
     async def get_message(self) -> str:
-        logger.warning(f'word')
         return str((await self.reader.read(255)).decode("utf8"))
 
     def send_message(self, message: bytes) -> None:
@@ -59,79 +56,93 @@ class Server:
     async def authentication(self, reader: StreamReader, writer: StreamWriter) -> None:
         logger.warning('Authentification user')
         user = AuthUser(reader, writer)
-        writer.write(WELCOME.encode())
+        writer.write(WELCOME_TEXT.encode())
         await self.check_messege(user)
 
-    def set_nickname(self, user: AuthUser, message: str) -> None:
-        logger.warning('Set nickname')
-        nick = message.split('-')[-1]
-        user.nickname = nick
-
     async def check_messege(self, user: AuthUser) -> None:
+        """Обработка команд"""
         while True:
             message = await user.get_message()
             logger.warning(f'message: {message}')
             if user.reports < 3:
-                logger.warning('Check messege')
                 if str(message) == '/public':
                     self.public_chat(message, user)
                 elif str(message).startswith('/nickname'):
-                    self.set_nickname(user, message)
+                    self.set_nickname(message, user)
                 elif str(message).startswith('/pm'):
-                    self.private_message(user, message)
+                    self.private_message(message, user)
                 elif str(message).startswith('/ban'):
                     self.ban(message)
-                elif str(message).startswith('/timer'):
-                    self.send_timer(message)
+                elif str(message).startswith('/delay'):
+                    self.set_delay(message)
                 elif user.public:
                     self.public_chat(message, user)
 
     def public_chat(self, message: str, user: AuthUser) -> None:
-        logger.warning('Is public chat')
+        """Общий чат"""
         if user.public:
-            save_msg = f'{user.nickname} send: {message}'
-            self.public.append(save_msg)
-            for value in self.users.values():
-                value.send_message(save_msg.encode('utf-8'))
+            msg = f'{user.nickname}: {message}'
+            self.public.append(msg)
+            for user_in_chat in self.users.values():
+                user_in_chat.send_message(msg.encode('utf-8'))
         else:
             user.public = True
             self.users[user.nickname] = user
-            for last_msg in self.public[:20]:
-                user.send_message(last_msg.encode('utf-8'))
+            for msg in self.public[:LAST_MSG_COUNT]:
+                user.send_message(msg.encode('utf-8'))
 
-    def private_message(self, user: AuthUser, message: str) -> None:
-        logger.warning('Send private message')
-        get_private = message.split('to')[-1]
-        msg = ((message.split('-')[1])).replace('to', 'from').encode('utf-8')
-        sent_to = self.users.get(get_private)
+    def set_nickname(self, message: str, user: AuthUser) -> None:
+        """Поменять ник."""
+        _, nick = self.parse_command(message, True)
+        logger.info(f'User {user.nickname} change nickname {nick}')
+        user.nickname = nick
+
+    def private_message(self, message: str, user: AuthUser) -> None:
+        """Личное сообщение."""
+        command, target_user = self.parse_command(message, True)
+        sent_to = self.users.get(target_user)
+        # /pm + пробел разделитель + длина имени получателя + пробел, далее идет сообщение
+        msg = (f'{user.nickname}: {message[len(command) + 1 + len(target_user) + 1:]}').encode('utf-8')
         if sent_to:
             logger.warning(sent_to)
             sent_to.send_message(msg)
 
     def ban(self, message: str) -> None:
+        """Забанить пользователя"""
         logger.warning('Send report')
-        user = message.split('to')[-1]
-        report_user = self.users.get(user)
+        _, target_user = self.parse_command(message, True)
+        report_user = self.users.get(target_user)
         if report_user:
             report_user.reports += 1
         if report_user.reports > 2:
             logger.warning(f'{report_user.nickname} user is banned on {BAN_TIME_SEC} sec')
-            timer = threading.Timer(BAN_TIME_SEC, function=self.timer_ban, args=(report_user,))
+            timer = threading.Timer(BAN_TIME_SEC, function=self.ban_timer, args=(report_user,))
             timer.start()
 
-    @staticmethod
-    def timer_ban(user: AuthUser) -> None:
-        logger.warning(f'Unblock user {user.nickname}')
+    def ban_timer(self, user: AuthUser) -> None:
+        """Разбанить пользователя по истечению времени."""
+        logger.warning(f'Unban user {user.nickname}')
         user.reports = 0
 
-    def send_timer(self, message: str) -> None:
-        get_date = ' '.join(message.split(' ')[-6:])
-        mes = message.split('-')[1]
-        date_time_obj = datetime.strptime(get_date, '%Y, %m, %d, %H, %M, %S')
+    def set_delay(self, message: str) -> None:
+        """Поставить задержку отправки."""
+        # '/delay 2023-01-23 22:26 Hi, i here'
+        command = self.parse_command(message)
+        date_str = message.split(' ')[1] + ' ' + message.split(' ')[2]
+        dt = datetime.strptime(date_str, '%Y-%m-%d %H:%M')
         now = datetime.now()
-        sec = (date_time_obj - now).total_seconds()
+        sec = (dt - now).total_seconds()
+        mes = message[len(command) + 1 + len(date_str) + 1:]
         timer = threading.Timer(sec, function=self.public_chat, args=(mes,))
         timer.start()
+
+    def parse_command(self, message: str, find_key: bool = False) -> Tuple[str, ...]:
+        """Получить применяемую команду. Если в качестве ключа передается пользователь, можно его определить."""
+        command = message.split(' ')[0]
+        if find_key:
+            user: str = message.split(' ')[1]
+            return command, user
+        return command
 
 
 if __name__ == '__main__':

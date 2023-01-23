@@ -7,6 +7,7 @@ from setting import HOST, PORT
 
 logger = get_logger(__name__)
 
+
 class Client:
     def __init__(self, server_host=HOST, server_port=PORT):
         self.server_host = server_host
