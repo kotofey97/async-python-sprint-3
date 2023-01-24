@@ -3,7 +3,7 @@ import asyncio
 from aioconsole import ainput
 
 from log_config import get_logger
-from setting import HOST, PORT
+from setting import HOST, PORT, MAX_BYTES
 
 logger = get_logger(__name__)
 
@@ -29,7 +29,7 @@ class Client:
             print(f"{server_message}")
 
     async def get_from_server(self) -> str:
-        return str((await self.reader.read(255)).decode("utf8"))
+        return (await self.reader.read(MAX_BYTES)).decode("utf8")
 
     async def send_to_server(self) -> None:
         while True:

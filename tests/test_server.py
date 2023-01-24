@@ -9,15 +9,15 @@ class TestServer:
         self.user = AuthUser('Stream', 'Writer')
 
     def test_set_nickname(self):
-        self.server.set_nickname('/nickname Test', self.user)
+        self.server.set_nickname('Test', self.user)
         assert self.user.nickname == 'Test'
 
     def test_public_chat(self):
         self.user.public = True
-        self.server.public_chat('Hi', self.user)
+        self.server.public_chat(self.user, 'Hi')
         assert self.server.public == ['User: Hi']
 
     def test_ban(self):
         self.server.users['Test'] = self.user
-        self.server.ban('/ban Test')
+        self.server.ban('Test')
         assert self.user.reports == 1
